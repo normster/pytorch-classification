@@ -5,6 +5,7 @@ Copyright (c) Wei YANG, 2017
 from __future__ import print_function
 
 import argparse
+import copy
 import os
 import shutil
 import time
@@ -19,6 +20,12 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models.cifar as models
+
+import matplotlib as mpl
+mpl.use('Agg')
+import matplotlib.pyplot as plt
+
+import numpy as np
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 
@@ -72,6 +79,8 @@ parser.add_argument('--compressionRate', type=int, default=2, help='Compression 
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
+parser.add_argument('--visualize-loss', action='store_true',
+                    help='visualize loss landscape')
 #Device options
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
@@ -186,6 +195,9 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer'])
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title, resume=True)
     else:
+        if os.path.isfile(c_fname):
+            if str(input("Overwrite existing checkpoint (%s)? (y/n): " % c_fname)) != 'y':
+                return
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title)
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
@@ -194,6 +206,10 @@ def main():
         print('\nEvaluation only')
         test_loss, test_acc = test(testloader, model, criterion, start_epoch, use_cuda)
         print(' Test Loss:  %.8f, Test Acc:  %.2f' % (test_loss, test_acc))
+        return
+
+    if args.visualize_loss:
+        visualize_loss(model, testloader, -0.001, 0.001)
         return
 
     # Train and val
@@ -225,6 +241,36 @@ def main():
 
     print('Best acc:')
     print(best_acc)
+
+def visualize_loss(model, testloader, min, max, samples=100, v=None, output_dir=""):
+    if not v:
+        v = []
+        for p in model.parameters():
+            v.append(np.random.normal(size=p.shape))
+
+    losses = []
+    acces = []
+    epses = np.linspace(min, max, num=samples)
+    for eps in epses:
+        pert_model = perturb(model, v, eps)
+        loss, acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda)
+        losses.append(loss)
+        acces.append(acc)
+
+    plt.plot(epses, losses)
+    plt.savefig(os.path.join(output_dir, "loss.pdf"), dpi=dpi)
+    plt.clf()
+    plt.plot(epses, acces)
+    plt.savefig(os.path.join(output_dir, "acc.pdf"), dpi=dpi)
+
+
+def perturb(model, v, eps):
+    ret = copy.deepcopy(model)
+
+    for param, v_i in zip(ret.parameters(), v):
+        param += eps * v_i
+
+    return ret
 
 def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     # switch to train mode
