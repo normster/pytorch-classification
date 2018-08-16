@@ -7,6 +7,7 @@ from __future__ import print_function
 import argparse
 import copy
 import os
+import pickle
 import shutil
 import time
 import random
@@ -81,6 +82,8 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--visualize-loss', action='store_true',
                     help='visualize loss landscape')
+parser.add_argument('--vector', default='', type=str, metavar='PATH',
+                    help='path to serialized perturbation vector')
 #Device options
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
@@ -209,7 +212,12 @@ def main():
         return
 
     if args.visualize_loss:
-        visualize_loss(model, testloader, -0.001, 0.001)
+        print('==> Visualizing loss landscape..')
+        vector = None
+        if args.vector:
+            with open(args.vector, 'r') as f:
+                vector = pickle.load(f)    
+        visualize_loss(model, testloader, trainloader, -0.1, 0.1, vector)
         return
 
     # Train and val
@@ -242,33 +250,64 @@ def main():
     print('Best acc:')
     print(best_acc)
 
-def visualize_loss(model, testloader, min, max, samples=100, v=None, output_dir=""):
-    if not v:
-        v = []
+def visualize_loss(model, testloader, trainloader, left, right, vector, samples=200, output_dir=""):
+    if not vector:
+        vector = []
         for p in model.parameters():
-            v.append(np.random.normal(size=p.shape))
+            vector.append(np.random.normal(size=p.shape))
+        print('\tSaving perturbation_vector')
+        with open('perturbation_vector', 'w') as f:
+            pickle.dump(vector, f)
 
-    losses = []
-    acces = []
-    epses = np.linspace(min, max, num=samples)
-    for eps in epses:
-        pert_model = perturb(model, v, eps)
-        loss, acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda)
-        losses.append(loss)
-        acces.append(acc)
+    test_losses = []
+    test_acces = []
 
-    plt.plot(epses, losses)
-    plt.savefig(os.path.join(output_dir, "loss.pdf"), dpi=dpi)
+    train_losses = []
+    train_acces = []
+
+    epses = np.linspace(left, right, num=samples)
+    for i, eps in enumerate(epses):
+        print("\tTesting perturbation %d/%d" % (i+1, samples))
+        pert_model = perturb(model, vector, eps)
+        test_loss, test_acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda, show_bar=False)
+        train_loss, train_acc = test(trainloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda, show_bar=False)
+
+        test_losses.append(test_loss)
+        test_acces.append(test_acc)
+
+        train_losses.append(train_loss)
+        train_acces.append(train_acc)
+
+    plt.plot(epses, train_losses, label="Train Loss")
+    plt.plot(epses, test_losses, label="Test Loss")
+    plt.xlabel(u"\u03B5 (\u03B8' = \u03B8 + \u03B5)")
+    plt.ylabel("Cross Entropy Loss")
+    plt.yscale('log')
+    plt.legend()
+    plt.grid()
+    plt.savefig(os.path.join(output_dir, "loss.pdf"), dpi=150)
+
     plt.clf()
-    plt.plot(epses, acces)
-    plt.savefig(os.path.join(output_dir, "acc.pdf"), dpi=dpi)
+
+    plt.plot(epses, train_acces, label="Train Acc")
+    plt.plot(epses, test_acces, label="Test Acc")
+    plt.xlabel(u"\u03B5 (\u03B8' = \u03B8 + \u03B5)")
+    plt.ylabel("Top 1 Accuracy %")
+    plt.axis([left, right, 0, 100]) 
+    plt.legend()
+    plt.grid()
+    plt.savefig(os.path.join(output_dir, "acc.pdf"), dpi=150)
 
 
-def perturb(model, v, eps):
+def perturb(model, vector, eps):
     ret = copy.deepcopy(model)
 
-    for param, v_i in zip(ret.parameters(), v):
-        param += eps * v_i
+    for param, v_i in zip(ret.parameters(), vector):
+        param.requires_grad = False
+        update = torch.from_numpy(eps * v_i)
+        if use_cuda:
+            update = update.cuda()
+        param += update.float() 
 
     return ret
 
@@ -327,7 +366,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     bar.finish()
     return (losses.avg, top1.avg)
 
-def test(testloader, model, criterion, epoch, use_cuda):
+def test(testloader, model, criterion, epoch, use_cuda, show_bar=True):
     global best_acc
 
     batch_time = AverageMeter()
@@ -340,10 +379,13 @@ def test(testloader, model, criterion, epoch, use_cuda):
     model.eval()
 
     end = time.time()
-    bar = Bar('Processing', max=len(testloader))
+    if show_bar:
+        bar = Bar('Processing', max=len(testloader))
+    
     for batch_idx, (inputs, targets) in enumerate(testloader):
         # measure data loading time
-        data_time.update(time.time() - end)
+        if show_bar:
+            data_time.update(time.time() - end)
 
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
@@ -364,19 +406,21 @@ def test(testloader, model, criterion, epoch, use_cuda):
         end = time.time()
 
         # plot progress
-        bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                    batch=batch_idx + 1,
-                    size=len(testloader),
-                    data=data_time.avg,
-                    bt=batch_time.avg,
-                    total=bar.elapsed_td,
-                    eta=bar.eta_td,
-                    loss=losses.avg,
-                    top1=top1.avg,
-                    top5=top5.avg,
-                    )
-        bar.next()
-    bar.finish()
+        if show_bar:
+            bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                        batch=batch_idx + 1,
+                        size=len(testloader),
+                        data=data_time.avg,
+                        bt=batch_time.avg,
+                        total=bar.elapsed_td,
+                        eta=bar.eta_td,
+                        loss=losses.avg,
+                        top1=top1.avg,
+                        top5=top5.avg,
+                        )
+            bar.next()
+    if show_bar:
+        bar.finish()
     return (losses.avg, top1.avg)
 
 def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pth.tar'):
