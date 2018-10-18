@@ -2,14 +2,11 @@
 Training script for CIFAR-10/100
 Copyright (c) Wei YANG, 2017
 '''
-from __future__ import print_function
-
 import argparse
 import copy
 import os
 import pickle
 import shutil
-import time
 import random
 
 import torch
@@ -45,9 +42,9 @@ parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--train-batch', default=128, type=int, metavar='N',
+parser.add_argument('--train-batch', default=100, type=int, metavar='N',
                     help='train batchsize')
-parser.add_argument('--test-batch', default=100, type=int, metavar='N',
+parser.add_argument('--test-batch', default=1000, type=int, metavar='N',
                     help='test batchsize')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -87,9 +84,8 @@ parser.add_argument('--visualize-loss', action='store_true',
                     help='visualize loss landscape')
 parser.add_argument('--vector', default='', type=str, metavar='PATH',
                     help='path to serialized perturbation vector')
-#Device options
-parser.add_argument('--gpu-id', default='0', type=str,
-                    help='id(s) for CUDA_VISIBLE_DEVICES')
+parser.add_argument('--disable-cuda', action='store_true',
+                    help='Disable CUDA')
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -97,17 +93,18 @@ state = {k: v for k, v in args._get_kwargs()}
 # Validate dataset
 assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
 
-# Use CUDA
-os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
-use_cuda = torch.cuda.is_available()
-
 # Random seed
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
+
 random.seed(args.manualSeed)
 torch.manual_seed(args.manualSeed)
-if use_cuda:
+
+if not args.disable_cuda and torch.cuda.is_available():
+    device = torch.device('cuda')
     torch.cuda.manual_seed_all(args.manualSeed)
+else:
+    device = torch.device('cpu')
 
 best_acc = 0  # best test accuracy
 
@@ -128,7 +125,7 @@ def main():
 
 
     # Data
-    print('==> Preparing dataset %s' % args.dataset)
+    print('==> Preparing dataset {}'.format(args.dataset))
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -187,9 +184,9 @@ def main():
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
-    model = torch.nn.DataParallel(model).cuda()
+    model = model.to(device)
     cudnn.benchmark = True
-    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
+    print('    Total params: {0:.2f}M'.format(sum(p.numel() for p in model.parameters())/1000000.0))
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -210,7 +207,7 @@ def main():
     else:
         c_fname = os.path.join(args.checkpoint, 'log.txt')
         if os.path.isfile(c_fname):
-            if str(input("Overwrite existing checkpoint (%s)? (y/n): " % c_fname)) != 'y':
+            if input("Overwrite existing checkpoint ({})? (y/n): ".format(c_fname)) != 'y':
                 return
         logger = Logger(c_fname, title=title)
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
@@ -218,8 +215,8 @@ def main():
 
     if args.evaluate:
         print('\nEvaluation only')
-        test_loss, test_acc = test(testloader, model, criterion, start_epoch, use_cuda)
-        print(' Test Loss:  %.8f, Test Acc:  %.2f' % (test_loss, test_acc))
+        test_loss, test_acc = test(testloader, model, criterion, start_epoch)
+        print(' Test Loss:  {0:.8f}, Test Acc:  {1:.2f}'.format(test_loss, test_acc))
         return
 
     if args.visualize_loss:
@@ -239,10 +236,10 @@ def main():
         batch_sampler = data.BatchSampler(trainloader.sampler, batch_size, False)
         trainloader.batch_sampler = batch_sampler
 
-        print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
+        print('\nEpoch: [{} | {}] LR: {}'.format(epoch + 1, args.epochs, state['lr']))
 
-        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
-        test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
+        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch)
+        test_loss, test_acc = test(testloader, model, criterion, epoch)
 
         # append logger file
         logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
@@ -282,10 +279,10 @@ def visualize_loss(model, testloader, trainloader, left, right, vector, samples=
 
     epses = np.linspace(left, right, num=samples)
     for i, eps in enumerate(epses):
-        print("\tTesting perturbation %d/%d" % (i+1, samples))
+        print("\tTesting perturbation {}/{}".format(i+1, samples))
         pert_model = perturb(model, vector, eps)
-        test_loss, test_acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda)
-        train_loss, train_acc = test(trainloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda)
+        test_loss, test_acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0)
+        train_loss, train_acc = test(trainloader, pert_model, nn.CrossEntropyLoss(), 0)
 
         test_losses.append(test_loss)
         test_acces.append(test_acc)
@@ -319,14 +316,12 @@ def perturb(model, vector, eps):
 
     for param, v_i in zip(ret.parameters(), vector):
         param.requires_grad = False
-        update = torch.from_numpy(eps * v_i)
-        if use_cuda:
-            update = update.cuda()
+        update = torch.from_numpy(eps * v_i).to(device)
         param += update.float() 
 
     return ret
 
-def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
+def train(trainloader, model, criterion, optimizer, epoch):
     # switch to train mode
     model.train()
 
@@ -335,12 +330,9 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     top5 = AverageMeter()
 
     for batch_idx, (inputs, targets) in enumerate(trainloader):
-        # measure data loading time
-        data_time.update(time.time() - end)
 
-        if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda(async=True)
-        inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
+        inputs = inputs.to(device)
+        targets = targets.to(device)
 
         # compute output
         outputs = model(inputs)
@@ -348,9 +340,9 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -364,7 +356,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
                         ))
     return (losses.avg, top1.avg)
 
-def test(testloader, model, criterion, epoch, use_cuda):
+def test(testloader, model, criterion, epoch):
     global best_acc
 
     losses = AverageMeter()
@@ -375,9 +367,7 @@ def test(testloader, model, criterion, epoch, use_cuda):
     model.eval()
     
     for batch_idx, (inputs, targets) in enumerate(testloader):
-        if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda()
-        inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
+        inputs, targets = inputs.to(device), targets.to(device)
 
         # compute output
         outputs = model(inputs)
