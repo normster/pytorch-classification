@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 
 import numpy as np
 
-from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+from utils import Logger, AverageMeter, accuracy, mkdir_p, savefig
 
 
 model_names = sorted(name for name in models.__dict__
@@ -284,8 +284,8 @@ def visualize_loss(model, testloader, trainloader, left, right, vector, samples=
     for i, eps in enumerate(epses):
         print("\tTesting perturbation %d/%d" % (i+1, samples))
         pert_model = perturb(model, vector, eps)
-        test_loss, test_acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda, show_bar=False)
-        train_loss, train_acc = test(trainloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda, show_bar=False)
+        test_loss, test_acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda)
+        train_loss, train_acc = test(trainloader, pert_model, nn.CrossEntropyLoss(), 0, use_cuda)
 
         test_losses.append(test_loss)
         test_acces.append(test_acc)
@@ -330,14 +330,11 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     # switch to train mode
     model.train()
 
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
     end = time.time()
 
-    bar = Bar('Processing', max=len(trainloader))
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         # measure data loading time
         data_time.update(time.time() - end)
@@ -361,47 +358,26 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         loss.backward()
         optimizer.step()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        # plot progress
-        bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                    batch=batch_idx + 1,
-                    size=len(trainloader),
-                    data=data_time.avg,
-                    bt=batch_time.avg,
-                    total=bar.elapsed_td,
-                    eta=bar.eta_td,
-                    loss=losses.avg,
-                    top1=top1.avg,
-                    top5=top5.avg,
-                    )
-        bar.next()
-    bar.finish()
+    print('({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                        batch=batch_idx + 1,
+                        size=len(testloader),
+                        loss=losses.avg,
+                        top1=top1.avg,
+                        top5=top5.avg,
+                        ))
     return (losses.avg, top1.avg)
 
-def test(testloader, model, criterion, epoch, use_cuda, show_bar=True):
+def test(testloader, model, criterion, epoch, use_cuda):
     global best_acc
 
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
-
-    end = time.time()
-    if show_bar:
-        bar = Bar('Processing', max=len(testloader))
     
     for batch_idx, (inputs, targets) in enumerate(testloader):
-        # measure data loading time
-        if show_bar:
-            data_time.update(time.time() - end)
-
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
         inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
@@ -416,26 +392,14 @@ def test(testloader, model, criterion, epoch, use_cuda, show_bar=True):
         top1.update(prec1[0], inputs.size(0))
         top5.update(prec5[0], inputs.size(0))
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        # plot progress
-        if show_bar:
-            bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+    print('({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
                         batch=batch_idx + 1,
                         size=len(testloader),
-                        data=data_time.avg,
-                        bt=batch_time.avg,
-                        total=bar.elapsed_td,
-                        eta=bar.eta_td,
                         loss=losses.avg,
                         top1=top1.avg,
                         top5=top5.avg,
-                        )
-            bar.next()
-    if show_bar:
-        bar.finish()
+                        ))
+
     return (losses.avg, top1.avg)
 
 def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pth.tar'):
