@@ -333,7 +333,6 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-    end = time.time()
 
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         # measure data loading time
@@ -358,9 +357,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         loss.backward()
         optimizer.step()
 
-    print('({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                        batch=batch_idx + 1,
-                        size=len(testloader),
+    print('Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
                         loss=losses.avg,
                         top1=top1.avg,
                         top5=top5.avg,
@@ -392,9 +389,7 @@ def test(testloader, model, criterion, epoch, use_cuda):
         top1.update(prec1[0], inputs.size(0))
         top5.update(prec5[0], inputs.size(0))
 
-    print('({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                        batch=batch_idx + 1,
-                        size=len(testloader),
+    print('Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
                         loss=losses.avg,
                         top1=top1.avg,
                         top5=top5.avg,
