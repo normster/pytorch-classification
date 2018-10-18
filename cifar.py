@@ -60,6 +60,9 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
+parser.add_argument('--batch-schedule', default='batch_original', type=str)
+parser.add_argument('--width', default=10, type=int)
+parser.add_argument('--steps', default=4, type=int)
 # Checkpoints
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
@@ -107,6 +110,13 @@ if use_cuda:
     torch.cuda.manual_seed_all(args.manualSeed)
 
 best_acc = 0  # best test accuracy
+
+def batch_original(epoch, width, steps):
+    return args.train_batch
+
+def batch_cbs(epoch, width, steps):
+    k = (epoch // width) % steps
+    return int(2 ** k) * args.train_batch
 
 def main():
     global best_acc
@@ -220,9 +230,13 @@ def main():
         visualize_loss(model, testloader, trainloader, -0.1, 0.1, vector)
         return
 
+    compute_batch = globals()[args.batch_schedule]
     # Train and val
     for epoch in range(start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
+        batch_size = compute_batch(epoch, args.width, args.steps)
+        batch_sampler = data.BatchSampler(trainloader.sampler, batch_size, False)
+        trainloader.batch_sampler = batch_sampler
 
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
 
