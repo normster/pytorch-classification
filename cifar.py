@@ -208,10 +208,11 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer'])
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title, resume=True)
     else:
+        c_fname = os.path.join(args.checkpoint, 'log.txt')
         if os.path.isfile(c_fname):
             if str(input("Overwrite existing checkpoint (%s)? (y/n): " % c_fname)) != 'y':
                 return
-        logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title)
+        logger = Logger(c_fname, title=title)
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
 
