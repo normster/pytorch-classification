@@ -210,7 +210,7 @@ def main():
             if input("Overwrite existing checkpoint ({})? (y/n): ".format(c_fname)) != 'y':
                 return
         logger = Logger(c_fname, title=title)
-        logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
+        logger.set_names(['Learning Rate', "Batch Size", 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
 
     if args.evaluate:
@@ -242,7 +242,7 @@ def main():
         test_loss, test_acc = test(testloader, model, criterion, epoch)
 
         # append logger file
-        logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
+        logger.append([state['lr'], batch_size, train_loss, test_loss, train_acc, test_acc])
 
         # save model
         is_best = test_acc > best_acc
@@ -375,9 +375,9 @@ def test(testloader, model, criterion, epoch):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
     print('Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
                         loss=losses.avg,
