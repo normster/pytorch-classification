@@ -60,11 +60,15 @@ parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
 parser.add_argument('--batch-schedule', default='batch_original', type=str)
 parser.add_argument('--width', default=10, type=int)
 parser.add_argument('--steps', default=4, type=int)
+parser.add_argument('--glorot-init', action='store_true', help='use Glorot/Xavier initialization on mlp')
 # Checkpoints
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
+parser.add_argument("--loss-plot", type=str, default="loss.pdf")
+parser.add_argument("--acc-plot", type=str, default="acc.pdf")
+parser.add_argument("--viz-arrays", type=str)
 # Architecture
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet20',
                     choices=model_names,
@@ -84,6 +88,7 @@ parser.add_argument('--visualize-loss', action='store_true',
                     help='visualize loss landscape')
 parser.add_argument('--vector', default='', type=str, metavar='PATH',
                     help='path to serialized perturbation vector')
+parser.add_argument('--visualize-esd', action='store_true', help='visualize spectral density')
 parser.add_argument('--disable-cuda', action='store_true',
                     help='Disable CUDA')
 
@@ -181,6 +186,11 @@ def main():
                     num_classes=num_classes,
                     depth=args.depth,
                 )
+    elif args.arch == 'mlp':
+        model = models.__dict__[args.arch](
+                    glorot_init=args.glorot_init,
+                    num_classes=num_classes,
+                )
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
@@ -223,10 +233,29 @@ def main():
         print('==> Visualizing loss landscape..')
         vector = None
         if args.vector:
-            with open(args.vector, 'r') as f:
+            with open(args.vector, 'rb') as f:
                 vector = pickle.load(f)    
         visualize_loss(model, testloader, trainloader, -0.1, 0.1, vector)
         return
+
+    if args.visualize_esd:
+        A = model.FC3[0].weight.detach().cpu().numpy()
+        v, _ = np.linalg.eig(A @ A.T)
+        plt.hist(v, bins=100)
+        plt.title("Post-init ESD (FC3)")
+        plt.xlabel(u"\u03BB")
+        plt.ylabel("Frequency")
+        plt.savefig(os.path.join(args.checkpoint, "postinit_esd_fc3.pdf"), dpi=150)
+        plt.clf()
+
+        A = model.FC2[0].weight.detach().cpu().numpy()
+        v, _ = np.linalg.eig(A @ A.T)
+        plt.hist(v, bins=100)
+        plt.title("Post-init ESD (FC2)")
+        plt.xlabel(u"\u03BB")
+        plt.ylabel("Frequency")
+        plt.savefig(os.path.join(args.checkpoint, "postinit_esd_fc2.pdf"), dpi=150)
+        plt.clf()
 
     compute_batch = globals()[args.batch_schedule]
     # Train and val
@@ -243,6 +272,24 @@ def main():
 
         # append logger file
         logger.append([state['lr'], batch_size, train_loss, test_loss, train_acc, test_acc])
+        if args.visualize_esd and (epoch < (args.width * args.steps) or (epoch + 1) % (args.width * args.steps) == 0):
+            A = model.FC3[0].weight.detach().cpu().numpy()
+            v, _ = np.linalg.eig(A @ A.T)
+            plt.hist(v, bins=100)
+            plt.title("Epoch {} ESD (FC3)".format(epoch))
+            plt.xlabel(u"\u03BB")
+            plt.ylabel("Frequency")
+            plt.savefig(os.path.join(args.checkpoint, "epoch_{}_esd_fc3.pdf".format(epoch)), dpi=150)
+            plt.clf()
+
+            A = model.FC2[0].weight.detach().cpu().numpy()
+            v, _ = np.linalg.eig(A @ A.T)
+            plt.hist(v, bins=100)
+            plt.title("Epoch {} ESD (FC2)".format(epoch))
+            plt.xlabel(u"\u03BB")
+            plt.ylabel("Frequency")
+            plt.savefig(os.path.join(args.checkpoint, "epoch_{}_esd_fc2.pdf".format(epoch)), dpi=150)
+            plt.clf()
 
         # save model
         is_best = test_acc > best_acc
@@ -268,7 +315,7 @@ def visualize_loss(model, testloader, trainloader, left, right, vector, samples=
         for p in model.parameters():
             vector.append(np.random.normal(size=p.shape))
         print('\tSaving perturbation_vector')
-        with open('perturbation_vector', 'w') as f:
+        with open('perturbation_vector', 'wb') as f:
             pickle.dump(vector, f)
 
     test_losses = []
@@ -290,6 +337,9 @@ def visualize_loss(model, testloader, trainloader, left, right, vector, samples=
         train_losses.append(train_loss)
         train_acces.append(train_acc)
 
+    with open(args.viz_arrays, "wb") as f:
+        pickle.dump([test_losses, test_acces, train_losses, train_acces], f)
+
     plt.plot(epses, train_losses, label="Train Loss")
     plt.plot(epses, test_losses, label="Test Loss")
     plt.xlabel(u"\u03B5 (\u03B8' = \u03B8 + \u03B5)")
@@ -297,7 +347,7 @@ def visualize_loss(model, testloader, trainloader, left, right, vector, samples=
     plt.yscale('log')
     plt.legend()
     plt.grid()
-    plt.savefig(os.path.join(output_dir, "loss.pdf"), dpi=150)
+    plt.savefig(os.path.join(output_dir, args.loss_plot), dpi=150)
 
     plt.clf()
 
@@ -308,7 +358,7 @@ def visualize_loss(model, testloader, trainloader, left, right, vector, samples=
     plt.axis([left, right, 0, 100]) 
     plt.legend()
     plt.grid()
-    plt.savefig(os.path.join(output_dir, "acc.pdf"), dpi=150)
+    plt.savefig(os.path.join(output_dir, args.acc_plot), dpi=150)
 
 
 def perturb(model, vector, eps):
