@@ -69,3 +69,4 @@ from .wrn import *
 from .preresnet import *
 from .densenet import *
 from .mlp import *
+from .cryptodl import *
