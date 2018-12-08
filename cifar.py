@@ -57,6 +57,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
+parser.add_argument('--clip-grad-norm', type=float)
 parser.add_argument('--batch-schedule', default='batch_original', type=str)
 parser.add_argument('--width', default=10, type=int)
 parser.add_argument('--steps', default=4, type=int)
@@ -397,9 +398,11 @@ def train(trainloader, model, criterion, optimizer, epoch):
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
+        if args.clip_grad_norm:
+            nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
         optimizer.step()
 
-    print('Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+    print('Train loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
                         loss=losses.avg,
                         top1=top1.avg,
                         top5=top5.avg,
@@ -429,7 +432,7 @@ def test(testloader, model, criterion, epoch):
         top1.update(prec1.item(), inputs.size(0))
         top5.update(prec5.item(), inputs.size(0))
 
-    print('Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+    print('Test loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
                         loss=losses.avg,
                         top1=top1.avg,
                         top5=top5.avg,
