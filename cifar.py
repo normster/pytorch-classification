@@ -81,6 +81,7 @@ parser.add_argument('--cardinality', type=int, default=8, help='Model cardinalit
 parser.add_argument('--widen-factor', type=int, default=4, help='Widen factor. 4 -> 64, 8 -> 128, ...')
 parser.add_argument('--growthRate', type=int, default=12, help='Growth rate for DenseNet.')
 parser.add_argument('--compressionRate', type=int, default=2, help='Compression Rate (theta) for DenseNet.')
+parser.add_argument('-p-factor', type=int, default=1, help='Width increase factor for PNNs')
 # Miscs
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -182,7 +183,7 @@ def main():
                     widen_factor=args.widen_factor,
                     dropRate=args.drop,
                 )
-    elif args.arch.endswith('resnet'):
+    elif args.arch == 'resnet':
         model = models.__dict__[args.arch](
                     num_classes=num_classes,
                     depth=args.depth,
@@ -191,6 +192,16 @@ def main():
         model = models.__dict__[args.arch](
                     glorot_init=args.glorot_init,
                     num_classes=num_classes,
+                )
+    elif args.arch == 'pmlp':
+        model = models.__dict__[args.arch](
+                    glorot_init=args.glorot_init,
+                    num_classes=num_classes,
+                )
+    elif args.arch == 'presnet':
+        model = models.__dict__[args.arch](
+                    num_classes=num_classes,
+                    depth=args.depth,
                 )
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
