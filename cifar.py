@@ -44,7 +44,7 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--train-batch', default=100, type=int, metavar='N',
                     help='train batchsize')
-parser.add_argument('--test-batch', default=1000, type=int, metavar='N',
+parser.add_argument('--test-batch', default=100, type=int, metavar='N',
                     help='test batchsize')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -67,9 +67,6 @@ parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metava
                     help='path to save checkpoint (default: checkpoint)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument("--loss-plot", type=str, default="loss.pdf")
-parser.add_argument("--acc-plot", type=str, default="acc.pdf")
-parser.add_argument("--viz-arrays", type=str)
 # Architecture
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet20',
                     choices=model_names,
@@ -81,16 +78,10 @@ parser.add_argument('--cardinality', type=int, default=8, help='Model cardinalit
 parser.add_argument('--widen-factor', type=int, default=4, help='Widen factor. 4 -> 64, 8 -> 128, ...')
 parser.add_argument('--growthRate', type=int, default=12, help='Growth rate for DenseNet.')
 parser.add_argument('--compressionRate', type=int, default=2, help='Compression Rate (theta) for DenseNet.')
-parser.add_argument('-p-factor', type=int, default=1, help='Width increase factor for PNNs')
 # Miscs
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
-parser.add_argument('--visualize-loss', action='store_true',
-                    help='visualize loss landscape')
-parser.add_argument('--vector', default='', type=str, metavar='PATH',
-                    help='path to serialized perturbation vector')
-parser.add_argument('--visualize-esd', action='store_true', help='visualize spectral density')
 parser.add_argument('--disable-cuda', action='store_true',
                     help='Disable CUDA')
 
@@ -240,35 +231,7 @@ def main():
         test_loss, test_acc = test(testloader, model, criterion, start_epoch)
         print(' Test Loss:  {0:.8f}, Test Acc:  {1:.2f}'.format(test_loss, test_acc))
         return
-
-    if args.visualize_loss:
-        print('==> Visualizing loss landscape..')
-        vector = None
-        if args.vector:
-            with open(args.vector, 'rb') as f:
-                vector = pickle.load(f)    
-        visualize_loss(model, testloader, trainloader, -0.1, 0.1, vector)
-        return
-
-    if args.visualize_esd:
-        A = model.FC3[0].weight.detach().cpu().numpy()
-        v, _ = np.linalg.eig(A @ A.T)
-        plt.hist(v, bins=100)
-        plt.title("Post-init ESD (FC3)")
-        plt.xlabel(u"\u03BB")
-        plt.ylabel("Frequency")
-        plt.savefig(os.path.join(args.checkpoint, "postinit_esd_fc3.pdf"), dpi=150)
-        plt.clf()
-
-        A = model.FC2[0].weight.detach().cpu().numpy()
-        v, _ = np.linalg.eig(A @ A.T)
-        plt.hist(v, bins=100)
-        plt.title("Post-init ESD (FC2)")
-        plt.xlabel(u"\u03BB")
-        plt.ylabel("Frequency")
-        plt.savefig(os.path.join(args.checkpoint, "postinit_esd_fc2.pdf"), dpi=150)
-        plt.clf()
-
+    
     compute_batch = globals()[args.batch_schedule]
     # Train and val
     for epoch in range(start_epoch, args.epochs):
@@ -284,24 +247,6 @@ def main():
 
         # append logger file
         logger.append([state['lr'], batch_size, train_loss, test_loss, train_acc, test_acc])
-        if args.visualize_esd and (epoch < (args.width * args.steps) or (epoch + 1) % (args.width * args.steps) == 0):
-            A = model.FC3[0].weight.detach().cpu().numpy()
-            v, _ = np.linalg.eig(A @ A.T)
-            plt.hist(v, bins=100)
-            plt.title("Epoch {} ESD (FC3)".format(epoch))
-            plt.xlabel(u"\u03BB")
-            plt.ylabel("Frequency")
-            plt.savefig(os.path.join(args.checkpoint, "epoch_{}_esd_fc3.pdf".format(epoch)), dpi=150)
-            plt.clf()
-
-            A = model.FC2[0].weight.detach().cpu().numpy()
-            v, _ = np.linalg.eig(A @ A.T)
-            plt.hist(v, bins=100)
-            plt.title("Epoch {} ESD (FC2)".format(epoch))
-            plt.xlabel(u"\u03BB")
-            plt.ylabel("Frequency")
-            plt.savefig(os.path.join(args.checkpoint, "epoch_{}_esd_fc2.pdf".format(epoch)), dpi=150)
-            plt.clf()
 
         # save model
         is_best = test_acc > best_acc
@@ -321,67 +266,6 @@ def main():
     print('Best acc:')
     print(best_acc)
 
-def visualize_loss(model, testloader, trainloader, left, right, vector, samples=200, output_dir=""):
-    if not vector:
-        vector = []
-        for p in model.parameters():
-            vector.append(np.random.normal(size=p.shape))
-        print('\tSaving perturbation_vector')
-        with open('perturbation_vector', 'wb') as f:
-            pickle.dump(vector, f)
-
-    test_losses = []
-    test_acces = []
-
-    train_losses = []
-    train_acces = []
-
-    epses = np.linspace(left, right, num=samples)
-    for i, eps in enumerate(epses):
-        print("\tTesting perturbation {}/{}".format(i+1, samples))
-        pert_model = perturb(model, vector, eps)
-        test_loss, test_acc = test(testloader, pert_model, nn.CrossEntropyLoss(), 0)
-        train_loss, train_acc = test(trainloader, pert_model, nn.CrossEntropyLoss(), 0)
-
-        test_losses.append(test_loss)
-        test_acces.append(test_acc)
-
-        train_losses.append(train_loss)
-        train_acces.append(train_acc)
-
-    with open(args.viz_arrays, "wb") as f:
-        pickle.dump([test_losses, test_acces, train_losses, train_acces], f)
-
-    plt.plot(epses, train_losses, label="Train Loss")
-    plt.plot(epses, test_losses, label="Test Loss")
-    plt.xlabel(u"\u03B5 (\u03B8' = \u03B8 + \u03B5)")
-    plt.ylabel("Cross Entropy Loss")
-    plt.yscale('log')
-    plt.legend()
-    plt.grid()
-    plt.savefig(os.path.join(output_dir, args.loss_plot), dpi=150)
-
-    plt.clf()
-
-    plt.plot(epses, train_acces, label="Train Acc")
-    plt.plot(epses, test_acces, label="Test Acc")
-    plt.xlabel(u"\u03B5 (\u03B8' = \u03B8 + \u03B5)")
-    plt.ylabel("Top 1 Accuracy %")
-    plt.axis([left, right, 0, 100]) 
-    plt.legend()
-    plt.grid()
-    plt.savefig(os.path.join(output_dir, args.acc_plot), dpi=150)
-
-
-def perturb(model, vector, eps):
-    ret = copy.deepcopy(model)
-
-    for param, v_i in zip(ret.parameters(), vector):
-        param.requires_grad = False
-        update = torch.from_numpy(eps * v_i).to(device)
-        param += update.float() 
-
-    return ret
 
 def train(trainloader, model, criterion, optimizer, epoch):
     # switch to train mode

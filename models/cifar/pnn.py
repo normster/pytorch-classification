@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 
 __all__ = ['pmlp', 'palexnet', 'presnet']
 
@@ -27,18 +28,18 @@ class PMLP(nn.Module):
     def __init__(self, glorot_init, num_classes=10):
         super(PMLP, self).__init__()
         self.FC1 = nn.Sequential(
-            nn.PLinear(3 * 32 * 32, 512),
+            PLinear(3 * 32 * 32, 512),
             nn.ReLU(inplace=True)
         )
         self.FC2 = nn.Sequential(
-            nn.PLinear(512, 512),
+            PLinear(512, 512),
             nn.ReLU(inplace=True)
         )
         self.FC3 = nn.Sequential(
-            nn.PLinear(512, 512),
+            PLinear(512, 512),
             nn.ReLU(inplace=True)
         )
-        self.classifier = nn.PLinear(512, num_classes)
+        self.classifier = PLinear(512, num_classes)
         if glorot_init:
             lins = [self.FC1[0], self.FC2[0], self.FC3[0], self.classifier]
             for l in lins:
@@ -79,7 +80,7 @@ class PAlexNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
         )
-        self.classifier = nn.PLinear(256, num_classes)
+        self.classifier = PLinear(256, num_classes)
 
     def forward(self, x):
         x = self.features(x)
@@ -194,7 +195,11 @@ class PResNet(nn.Module):
         self.layer2 = self._make_layer(block, 32, n, stride=2)
         self.layer3 = self._make_layer(block, 64, n, stride=2)
         self.avgpool = nn.AvgPool2d(8)
-        self.fc = nn.PLinear(64 * block.expansion, num_classes)
+        self.fc = nn.Sequential(
+            PLinear(64 * block.expansion, 64 * block.expansion),
+            nn.ReLU(inplace=True),
+            PLinear(64 * block.expansion, num_classes),
+        )
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
