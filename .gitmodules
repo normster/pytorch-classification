@@ -1,3 +1,6 @@
 [submodule "utils/progress"]
 	path = utils/progress
 	url = https://github.com/verigak/progress.git
+[submodule "neuronal_augmentation"]
+	path = neuronal_augmentation
+	url = git@github.com:normster/neuronal_augmentation

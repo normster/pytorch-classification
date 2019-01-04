@@ -21,7 +21,7 @@ import torchvision.datasets as datasets
 import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-
+from neuronal_augmentation import AugmentLoss, AugmentModel
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -68,6 +68,8 @@ parser.add_argument('--cardinality', type=int, default=8, help='Model cardinalit
 parser.add_argument('--widen-factor', type=int, default=4, help='Widen factor. 4 -> 64, 8 -> 128, ...')
 parser.add_argument('--growthRate', type=int, default=12, help='Growth rate for DenseNet.')
 parser.add_argument('--compressionRate', type=int, default=2, help='Compression Rate (theta) for DenseNet.')
+parser.add_argument('--augment', action='store_true')
+parser.add_argument('--augment-lambda', type=float, default=0.1)
 # Miscs
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -75,6 +77,7 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 #Device options
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
+
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -164,12 +167,18 @@ def main():
                 )
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
+    if args.augment:
+        model = AugmentModel(model, 3 * 32 * 32, num_classes)
 
     model = torch.nn.DataParallel(model).cuda()
+
     cudnn.benchmark = True
     print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
 
     criterion = nn.CrossEntropyLoss()
+    if args.augment:
+        criterion = AugmentLoss(criterion, model.module.scale, l=args.augment_lambda)
+
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
     # Resume
@@ -196,6 +205,8 @@ def main():
         print(' Test Loss:  %.8f, Test Acc:  %.2f' % (test_loss, test_acc))
         return
 
+    import pudb
+    pudb.set_trace()
     # Train and val
     for epoch in range(start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
