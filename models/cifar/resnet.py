@@ -92,7 +92,7 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, depth, num_classes=1000):
+    def __init__(self, depth, chunks, num_classes=1000):
         super(ResNet, self).__init__()
         # Model type specifies number of layers for CIFAR-10 model
         assert (depth - 2) % 6 == 0, 'depth should be 6n+2'
@@ -100,14 +100,16 @@ class ResNet(nn.Module):
 
         block = Bottleneck if depth >=44 else BasicBlock
 
+        layers = []
         self.inplanes = 16
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 16, n)
-        self.layer2 = self._make_layer(block, 32, n, stride=2)
-        self.layer3 = self._make_layer(block, 64, n, stride=2)
+
+        layers.append(nn.Sequential(nn.Conv2d(3, 16, kernel_size=3, padding=1, bias=False),
+                                    nn.BatchNorm2d(16),
+                                    nn.ReLU(inplace=True)))
+        layers.extend(self._make_layer(block, 16, n, chunks[0]))
+        layers.extend(self._make_layer(block, 32, n, chunks[1], stride=2))
+        layers.extend(self._make_layer(block, 64, n, chunks[2], stride=2))
+        self.network = nn.Sequential(*layers)
         self.avgpool = nn.AvgPool2d(8)
         self.fc = nn.Linear(64 * block.expansion, num_classes)
 
@@ -119,7 +121,7 @@ class ResNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def _make_layer(self, block, planes, blocks, stride=1):
+    def _make_layer(self, block, planes, blocks, chunks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -129,21 +131,24 @@ class ResNet(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
+        queue = []
+        width = blocks // chunks
+        queue.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+            queue.append(block(self.inplanes, planes))
 
-        return nn.Sequential(*layers)
+            if (i + 1) % width == 0:
+                layers.append(nn.Sequential(*queue))
+                queue.clear()
+
+        if len(queue) > 0:
+            layers.append(nn.Sequential(*queue))
+
+        return layers
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)    # 32x32
-
-        x = self.layer1(x)  # 32x32
-        x = self.layer2(x)  # 16x16
-        x = self.layer3(x)  # 8x8
+        x = self.network(x)
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
