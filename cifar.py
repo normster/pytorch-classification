@@ -75,9 +75,12 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 #Device options
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
+parser.add_argument('--chunks', nargs=3, default=[1, 1, 1]) 
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
+
+args.chunks = [int(x) for x in args.chunks]
 
 # Validate dataset
 assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
@@ -161,6 +164,7 @@ def main():
         model = models.__dict__[args.arch](
                     num_classes=num_classes,
                     depth=args.depth,
+                    chunks=args.chunks,
                 )
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)

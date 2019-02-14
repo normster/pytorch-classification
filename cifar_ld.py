@@ -20,6 +20,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models.cifar as models
 
+from wrapper import Wrapper
+
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 
 
@@ -73,11 +75,16 @@ parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
 parser.add_argument('--adam', action='store_true')
-parser.add_argument('--gamma', default=1, type=float)
-parser.add_argument('--gamma-schedule', default='linear_gamma', type=str)
+parser.add_argument('--kappa', default=1, type=float)
+parser.add_argument('--kappa-schedule', default='linear_kappa', type=str)
+parser.add_argument('--lr-schedule', default='cyclic_lr', type=str)
+parser.add_argument('--chunks', nargs=3, default=[1, 1, 1]) 
+parser.add_argument('--resume', default="", type=str)
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
+
+args.chunks = [int(x) for x in args.chunks]
 
 # Validate dataset
 assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
@@ -131,21 +138,26 @@ def main():
 
     # Model
     print("==> creating model")
-    student = models.resnet(
+    student = models.__dict__[args.student](
                 num_classes=num_classes,
                 depth=args.student_depth,
+                chunks=args.chunks,
             )
-    teacher = models.resnet(
+    teacher = models.__dict__[args.teacher](
                 num_classes=num_classes,
                 depth=args.teacher_depth,
+                chunks=args.chunks,
             )
-    # TODO: figure out load state dict
     checkpoint = torch.load(args.pretrained)
     teacher.load_state_dict(checkpoint)
 
     model = Wrapper(student, teacher)
     model = torch.nn.DataParallel(model).cuda()
     cudnn.benchmark = True
+
+    if args.resume:
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint)
 
     criterion = nn.CrossEntropyLoss()
 
@@ -160,11 +172,12 @@ def main():
     logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
     # Train and val
-    adjust_gamma = globals()[args.gamma_schedule]
+    adjust_kappa = globals()[args.kappa_schedule]
+    adjust_learning_rate = globals()[args.lr_schedule]
     for epoch in range(0, args.epochs):
         if not args.adam:
             adjust_learning_rate(optimizer, epoch)
-        adjust_gamma(epoch, args)
+        adjust_kappa(epoch, args)
 
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
 
@@ -206,11 +219,8 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
             inputs, targets = inputs.cuda(), targets.cuda()
 
         # compute output
-        if args.gamma == 1:
-            loss = model(input, mode='train_no_student')
-        else:
-            output, layerwise_loss = model(input)
-            loss = torch.sum(layerwise_loss) * args.gamma + criterion(output, target) * (1 - args.gamma)
+        outputs, layerwise_loss = model(inputs)
+        loss = torch.sum(layerwise_loss) * args.kappa + criterion(outputs, targets) * (1 - args.kappa)
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -294,15 +304,21 @@ def test(testloader, model, criterion, epoch, use_cuda):
     bar.finish()
     return (losses.avg, top1.avg)
 
-def linear_gamma(epoch, args):
+def linear_kappa(epoch, args):
     if epoch in [10, 20, 30, 40, 50, 60, 70]:
-        args.gamma -= 0.125
+        args.kappa -= 0.125
 
-def linear_gamma_short(epoch, args):
+def linear_kappa_short(epoch, args):
     if epoch >= 20:
-        args.gamma = 0.01
+        args.kappa = 0.01
     elif epoch >= 10:
-        args.gamma = 0.5
+        args.kappa = 0.5
+
+def linear_kappa_medium(epoch, args):
+    if epoch >= 80:
+        args.kappa = 0.01
+    elif epoch >= 40:
+        args.kappa = 0.5
 
 def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pth.tar'):
     filepath = os.path.join(checkpoint, filename)
@@ -310,12 +326,26 @@ def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoin
     if is_best:
         shutil.copyfile(filepath, os.path.join(checkpoint, 'model_best.pth.tar'))
 
-def adjust_learning_rate(optimizer, epoch):
+def default_lr(optimizer, epoch):
     global state
     if epoch in args.schedule:
         state['lr'] *= args.gamma
         for param_group in optimizer.param_groups:
             param_group['lr'] = state['lr']
+
+def cyclic_lr(optimizer, epoch):
+    lr = args.lr
+    k = epoch // 40
+    lr *= 0.1 ** k
+    j = epoch % 40
+    if j >= 20:
+        lr *= 0.1
+    if j >= 30:
+        lr *= 0.1
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr 
+
 
 if __name__ == '__main__':
     main()
