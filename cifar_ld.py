@@ -304,6 +304,9 @@ def test(testloader, model, criterion, epoch, use_cuda):
     bar.finish()
     return (losses.avg, top1.avg)
 
+def noop_kappa(epoch, args):
+    pass
+
 def linear_kappa(epoch, args):
     if epoch in [10, 20, 30, 40, 50, 60, 70]:
         args.kappa -= 0.125
@@ -320,6 +323,14 @@ def linear_kappa_medium(epoch, args):
     elif epoch >= 40:
         args.kappa = 0.5
 
+def linear_kappa_long(epoch, args):
+    if epoch >= 180:
+        args.kappa = 0.01
+    elif epoch >= 120:
+        args.kappa = 0.1
+    elif epoch >= 60:
+        args.kappa = 0.5
+
 def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pth.tar'):
     filepath = os.path.join(checkpoint, filename)
     torch.save(state, filepath)
@@ -334,6 +345,7 @@ def default_lr(optimizer, epoch):
             param_group['lr'] = state['lr']
 
 def cyclic_lr(optimizer, epoch):
+    global state
     lr = args.lr
     k = epoch // 40
     lr *= 0.1 ** k
@@ -346,6 +358,23 @@ def cyclic_lr(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr 
 
+    state['lr'] = lr
+
+def cyclic_lr_long(optimizer, epoch):
+    global state
+    lr = args.lr
+    k = epoch // 60
+    lr *= 0.1 ** k
+    j = epoch % 60
+    if j >= 20:
+        lr *= 0.1
+    if j >= 40:
+        lr *= 0.1
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr 
+
+    state['lr'] = lr
 
 if __name__ == '__main__':
     main()
